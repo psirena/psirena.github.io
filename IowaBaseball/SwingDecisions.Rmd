@@ -1,0 +1,283 @@
+---
+title: "Swing Decisions"
+author: "Paul Sirena"
+date: "2/5/2021"
+output: html_document
+---
+
+```{r Packages,include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(randomForest)
+library(tidyverse)
+```
+
+```{r Data,include=FALSE}
+data <- read.csv("NCAA_TM_Final_FULL.csv") # our Trackman file
+```
+
+```{r Data Frame for Model,echo=FALSE}
+data <- filter(data,Count!="3-0" & GameType=="In-Season")
+Games <- data %>% filter(BatterTeam!="IOW_HAW") %>%
+  select(Date,Strikes,BatterTeam,Batter,CountType,TaggedPitchType,PitchCall,RelSpeed,PlateLocHeight,PlateLocSide,
+         InducedVertBreak,HorzBreak,InZone,ExitSpeed,ZoneLabel,Swing,Date,Time,PitchofPA,Inning,Pitcher,PitcherTeam) 
+Iowa <- data %>% filter(BatterTeam=="IOW_HAW") %>%
+  select(Date,Strikes,BatterTeam,Batter,CountType,TaggedPitchType,PitchCall,RelSpeed,PlateLocHeight,PlateLocSide,
+         InducedVertBreak,HorzBreak,InZone,ExitSpeed,ZoneLabel,Swing,Date,Time,PitchofPA,Inning,Pitcher,PitcherTeam)  
+
+set.seed(12345)
+train_index <- sample(1:nrow(Games),floor(nrow(Games)/2),replace=FALSE)
+test_index <- setdiff(1:nrow(Games),train_index)
+
+GamesTrain <- Games[train_index,]
+GamesTest <- rbind(Iowa,Games[test_index,])
+```
+
+```{r Zero Strikes Modeling,echo=FALSE}
+TestZero <- filter(GamesTest,Strikes==0)
+TestZero$InZone <- ifelse((TestZero$PlateLocHeight <= 3.5 - 2.875 / 12 &
+                             TestZero$PlateLocHeight >= 1.5 + 2.875 / 12) &
+                            (TestZero$PlateLocSide >= -.833 + 2.875 / 12 &
+                              TestZero$PlateLocSide <= .833 - 2.875 / 12),1,0)
+TrainZero <- filter(GamesTrain,Strikes==0)
+TrainZero$InZone <- ifelse((TrainZero$PlateLocHeight <= 3.5 - 2.875 / 12 &
+                              TrainZero$PlateLocHeight >= 1.5 + 2.875 / 12) &
+                             (TrainZero$PlateLocSide >= -.833 + 2.875 / 12 &
+                                TrainZero$PlateLocSide <= .833 - 2.875 / 12),1,0)
+
+TrainZero_Takes <- filter(TrainZero,PitchCall=="StrikeCalled" | PitchCall=="BallCalled")
+TrainZero_Takes$StrikeCalled <- as.factor(ifelse(TrainZero_Takes$PitchCall=="StrikeCalled",1,0))
+TrainZero_Takes <- TrainZero_Takes %>% select(StrikeCalled,PlateLocHeight,PlateLocSide,InZone) %>% na.omit()
+
+Zero_CalledStrikeRF <- randomForest(StrikeCalled~.,data=TrainZero_Takes)
+
+TestZero$CS_Prob <- predict(Zero_CalledStrikeRF,TestZero[,c(9:10,13)],type="prob")[,2]
+TestZero <- TestZero %>% filter(!is.na(CS_Prob))
+
+TrainZero_Metrics <- TrainZero %>% select(Swing,RelSpeed,PlateLocHeight,PlateLocSide,InducedVertBreak,HorzBreak,InZone) %>%
+  na.omit()
+TrainZero_Metrics$Swing <- as.factor(ifelse(TrainZero_Metrics$Swing == TRUE,1,0))
+
+Zero_SwingRF <- randomForest(Swing~.,data=TrainZero_Metrics)
+
+TestZero$Swing_Prob <- predict(Zero_SwingRF,TestZero[,8:13],type="prob")[,2]
+
+TrainZero_Swing <- filter(TrainZero,Swing==TRUE)
+TrainZero_Swing$Contact <- as.factor(ifelse(TrainZero_Swing$PitchCall == "InPlay",1,0))
+TrainZero_Swing <- TrainZero_Swing %>% select(Contact,RelSpeed,PlateLocHeight,PlateLocSide,InducedVertBreak,
+                                              HorzBreak,InZone) %>% na.omit()
+
+Zero_ContactRF <- randomForest(Contact~.,data=TrainZero_Swing)
+
+TestZero$Contact_Prob <- predict(Zero_ContactRF,TestZero[,8:13],type="prob")[,2] * TestZero$Swing_Prob
+
+TrainZero_InPlay <- filter(TrainZero,PitchCall=="InPlay")
+TrainZero_InPlay$HardHit <- as.factor(ifelse(TrainZero_InPlay$ExitSpeed >= 95,1,0))
+TrainZero_InPlay <- TrainZero_InPlay %>%
+  select(HardHit,RelSpeed,PlateLocHeight,PlateLocSide,InducedVertBreak,HorzBreak,InZone) %>% na.omit()
+
+Zero_HardHitRF <- randomForest(HardHit~.,data=TrainZero_InPlay)
+
+TestZero$HH_Prob <- predict(Zero_HardHitRF,TestZero[,8:13],type="prob")[,2] * TestZero$Contact_Prob
+```
+
+```{r Zero Strike SDS}
+TestZero$SDS <- round(ifelse(TestZero$Swing==TRUE,
+                             32*((TestZero$CS_Prob - (1 - TestZero$CS_Prob)) + TestZero$Swing_Prob + TestZero$HH_Prob),
+                             32*(((1 - TestZero$CS_Prob) - TestZero$CS_Prob) - TestZero$Swing_Prob)), 3)
+TestZero$SDS <- ifelse(TestZero$ZoneLabel=="Waste" & TestZero$Swing==FALSE,0,TestZero$SDS)
+```
+
+```{r One Strike}
+TestOne <- filter(GamesTest,Strikes==1)
+TestOne$InZone <- ifelse((TestOne$PlateLocHeight <= 3.5 &
+                            TestOne$PlateLocHeight >= 1.5) &
+                           (TestOne$PlateLocSide >= -.833 &
+                              TestOne$PlateLocSide <= .833),1,0)
+TrainOne <- filter(GamesTrain,Strikes==1)
+TrainOne$InZone <- ifelse((TrainOne$PlateLocHeight <= 3.5 &
+                              TrainOne$PlateLocHeight >= 1.5) &
+                             (TrainOne$PlateLocSide >= -.833 &
+                                TrainOne$PlateLocSide <= .833),1,0)
+
+TrainOne_Takes <- filter(TrainOne,PitchCall=="StrikeCalled" | PitchCall=="BallCalled")
+TrainOne_Takes$StrikeCalled <- as.factor(ifelse(TrainOne_Takes$PitchCall=="StrikeCalled",1,0))
+TrainOne_Takes <- TrainOne_Takes %>% select(StrikeCalled,PlateLocHeight,PlateLocSide,InZone) %>% na.omit()
+
+One_CalledStrikeRF <- randomForest(StrikeCalled~.,data=TrainOne_Takes)
+
+TestOne$CS_Prob <- predict(One_CalledStrikeRF,TestOne[,c(9:10,13)],type="prob")[,2]
+TestOne <- TestOne %>% filter(!is.na(CS_Prob))
+
+TrainOne_Metrics <- TrainOne %>% select(Swing,RelSpeed,PlateLocHeight,PlateLocSide,InducedVertBreak,HorzBreak,InZone) %>%
+  na.omit()
+TrainOne_Metrics$Swing <- as.factor(ifelse(TrainOne_Metrics$Swing == TRUE,1,0))
+
+One_SwingRF <- randomForest(Swing~.,data=TrainOne_Metrics)
+
+TestOne$Swing_Prob <- predict(One_SwingRF,TestOne[,8:13],type="prob")[,2]
+
+TrainOne_Swing <- filter(TrainOne,Swing==TRUE)
+TrainOne_Swing$Contact <- as.factor(ifelse(TrainOne_Swing$PitchCall == "InPlay",1,0))
+TrainOne_Swing <- TrainOne_Swing %>% select(Contact,RelSpeed,PlateLocHeight,PlateLocSide,InducedVertBreak,
+                                            HorzBreak,InZone) %>% na.omit()
+
+One_ContactRF <- randomForest(Contact~.,data=TrainOne_Swing)
+
+TestOne$Contact_Prob <- predict(One_ContactRF,TestOne[,8:13],type="prob")[,2] * TestOne$Swing_Prob
+
+TrainOne_InPlay <- filter(TrainOne,PitchCall=="InPlay")
+TrainOne_InPlay$HardHit <- as.factor(ifelse(TrainOne_InPlay$ExitSpeed >= 95,1,0))
+TrainOne_InPlay <- TrainOne_InPlay %>%
+  select(HardHit,RelSpeed,PlateLocHeight,PlateLocSide,InducedVertBreak,HorzBreak,InZone) %>% na.omit()
+
+One_HardHitRF <- randomForest(HardHit~.,data=TrainOne_InPlay)
+
+TestOne$HH_Prob <- predict(One_HardHitRF,TestOne[,8:13],type="prob")[,2] * TestOne$Contact_Prob
+```
+
+```{r One Strike SDS}
+TestOne$SDS <- round(ifelse(TestOne$Swing==TRUE,
+                            32*((TestOne$CS_Prob - (1 - TestOne$CS_Prob)) + TestOne$Swing_Prob + TestOne$HH_Prob),
+                            32*(((1 - TestOne$CS_Prob) - TestOne$CS_Prob) - TestOne$Swing_Prob)), 3)
+TestOne$SDS <- ifelse(TestOne$ZoneLabel=="Waste" & TestOne$Swing==FALSE,0,TestOne$SDS)
+```
+
+```{r Two Strikes}
+TestTwo <- filter(GamesTest,Strikes==2)
+TestTwo$InZone <- ifelse((TestTwo$PlateLocHeight <= 3.5 + 2.875 / 12 &
+                              TestTwo$PlateLocHeight >= 1.5 - 2.875 / 12) &
+                             (TestTwo$PlateLocSide >= -.833 - 2.875 / 12 &
+                                TestTwo$PlateLocSide <= .833 + 2.875 / 12),1,0)
+TrainTwo <- filter(GamesTrain,Strikes==2)
+TrainTwo$InZone <- ifelse((TrainTwo$PlateLocHeight <= 3.5 + 2.875 / 12 &
+                              TrainTwo$PlateLocHeight >= 1.5 - 2.875 / 12) &
+                             (TrainTwo$PlateLocSide >= -.833 - 2.875 / 12 &
+                                TrainTwo$PlateLocSide <= .833 + 2.875 / 12),1,0)
+
+TrainTwo_Takes <- filter(TrainTwo,PitchCall=="StrikeCalled" | PitchCall=="BallCalled")
+TrainTwo_Takes$StrikeCalled <- as.factor(ifelse(TrainTwo_Takes$PitchCall=="StrikeCalled",1,0))
+TrainTwo_Takes <- TrainTwo_Takes %>% select(StrikeCalled,PlateLocHeight,PlateLocSide,InZone) %>% na.omit()
+
+Two_CalledStrikeRF <- randomForest(StrikeCalled~.,data=TrainTwo_Takes)
+
+TestTwo$CS_Prob <- predict(Two_CalledStrikeRF,TestTwo[,c(9:10,13)],type="prob")[,2]
+TestTwo <- TestTwo %>% filter(!is.na(CS_Prob))
+
+TrainTwo_Metrics <- TrainTwo %>% select(Swing,RelSpeed,PlateLocHeight,PlateLocSide,InducedVertBreak,HorzBreak,InZone) %>%
+  na.omit()
+TrainTwo_Metrics$Swing <- as.factor(ifelse(TrainTwo_Metrics$Swing == TRUE,1,0))
+
+Two_SwingRF <- randomForest(Swing~.,data=TrainTwo_Metrics)
+
+TestTwo$Swing_Prob <- predict(Two_SwingRF,TestTwo[,8:13],type="prob")[,2]
+
+TrainTwo_Swing <- filter(TrainTwo,Swing==TRUE)
+TrainTwo_Swing$Contact <- as.factor(ifelse(TrainTwo_Swing$PitchCall == "InPlay",1,0))
+TrainTwo_Swing <- TrainTwo_Swing %>% select(Contact,RelSpeed,PlateLocHeight,PlateLocSide,InducedVertBreak,
+                                              HorzBreak,InZone) %>% na.omit()
+
+Two_ContactRF <- randomForest(Contact~.,data=TrainTwo_Swing)
+
+TestTwo$Contact_Prob <- predict(Two_ContactRF,TestTwo[,8:13],type="prob")[,2] * TestTwo$Swing_Prob
+
+TrainTwo_InPlay <- filter(TrainTwo,PitchCall=="InPlay")
+TrainTwo_InPlay$HardHit <- as.factor(ifelse(TrainTwo_InPlay$ExitSpeed >= 95,1,0))
+TrainTwo_InPlay <- TrainTwo_InPlay %>%
+  select(HardHit,RelSpeed,PlateLocHeight,PlateLocSide,InducedVertBreak,HorzBreak,InZone) %>% na.omit()
+
+Two_HardHitRF <- randomForest(HardHit~.,data=TrainTwo_InPlay)
+
+TestTwo$HH_Prob <- predict(Two_HardHitRF,TestTwo[,8:13],type="prob")[,2] * TestTwo$Contact_Prob
+```
+
+```{r Two Strike SDS}
+TestTwo$SDS <- ifelse(TestTwo$Swing==TRUE,
+                      32*(2*(TestTwo$CS_Prob - (1 - TestTwo$CS_Prob)) + TestTwo$Swing_Prob + TestTwo$HH_Prob),
+                      32*(2*((1 - TestTwo$CS_Prob) - TestTwo$CS_Prob) - TestTwo$Swing_Prob))
+TestTwo$SDS <- ifelse(TestTwo$ZoneLabel=="Waste" & TestTwo$Swing==FALSE,0,TestTwo$SDS)
+```
+
+```{r Total Score}
+Test <- filter(rbind(TestZero,TestOne,TestTwo),!is.na(Swing))
+Test$Batter <- ifelse(Test$Batter=="Fullard, Izaya","Ono-Fullard, Izaya",Test$Batter)
+Test$Batter <- ifelse(Test$Batter=="Whelan, Christopher","Whelan, Chris",Test$Batter)
+Test$Batter <- ifelse(Test$Batter=="Adreon, Zebulun","Adreon, Zeb",Test$Batter)
+Test$Batter <- ifelse(Test$Batter=="Norman, Benjamin","Norman, Ben",Test$Batter)
+League_SDS <- round(mean(Test$SDS,na.rm=TRUE), 3)
+League0_SDS <- round(mean(TestZero$SDS,na.rm=TRUE), 3)
+League1_SDS <- round(mean(TestOne$SDS,na.rm=TRUE), 3)
+League2_SDS <- round(mean(TestTwo$SDS,na.rm=TRUE), 3)
+
+Batter_SDS <- Test %>% group_by(Batter,BatterTeam) %>% filter(n() >= 20) %>%
+  summarize('Total Pitches Seen' = n(), 'SDS' = sum(SDS),
+            'Total SDS+' = floor(round(sum(SDS) / n(), 3)/League_SDS * 100)) %>%
+  select(Batter,BatterTeam,`Total Pitches Seen`,`Total SDS+`) 
+
+Iowa_SDS <- filter(Batter_SDS,BatterTeam=="IOW_HAW")
+
+Batter_SDS_0Strikes <- Test %>% filter(Strikes==0) %>% group_by(Batter,BatterTeam) %>%
+  summarize('Zero Strike Pitches Seen' = n(), 'SDS' = sum(SDS),
+            'Zero Strike SDS+' = floor(round(sum(SDS) / n(), 3)/League0_SDS * 100)) %>%
+  select(Batter,BatterTeam,`Zero Strike Pitches Seen`,`Zero Strike SDS+`)
+
+Iowa_SDS_0Strikes <- filter(Batter_SDS_0Strikes,BatterTeam=="IOW_HAW")
+
+Batter_SDS_1Strike <- Test %>% filter(Strikes==1) %>% group_by(Batter,BatterTeam) %>%
+  summarize('One Strike Pitches Seen' = n(), 'SDS' = sum(SDS),
+            'One Strike SDS+' = floor(round(sum(SDS) / n(), 3)/League1_SDS * 100)) %>%
+  select(Batter,BatterTeam,`One Strike Pitches Seen`,`One Strike SDS+`)
+
+Iowa_SDS_1Strike <- filter(Batter_SDS_1Strike,BatterTeam=="IOW_HAW")
+
+Batter_SDS_2Strikes <- Test %>% filter(Strikes==2) %>% group_by(Batter,BatterTeam) %>%
+  summarize('Two Strike Pitches Seen' = n(), 'SDS' = sum(SDS),
+            'Two Strike SDS+' = floor(round(sum(SDS) / n(), 3)/League2_SDS * 100)) %>%
+  select(Batter,BatterTeam,`Two Strike Pitches Seen`,`Two Strike SDS+`)
+
+Iowa_SDS_2Strikes <- filter(Batter_SDS_2Strikes,BatterTeam=="IOW_HAW")
+
+TestEven <- filter(Test,CountType=="Even")
+LeagueEven_SDS <- mean(TestEven$SDS,na.rm=TRUE)
+TestFirst <- filter(Test,CountType=="First Pitch")
+LeagueFirst_SDS <- mean(TestFirst$SDS,na.rm=TRUE)
+TestAhead <- filter(Test,CountType=="Hitter Ahead")
+LeagueAhead_SDS <- mean(TestAhead$SDS,na.rm=TRUE)
+TestBehind <- filter(Test,CountType=="Pitcher Ahead")
+LeagueBehind_SDS <- mean(TestBehind$SDS,na.rm=TRUE)
+
+Batter_SDS_Even <- Test %>% filter(CountType=="Even") %>% group_by(Batter,BatterTeam) %>%
+  summarize('Even Count Pitches Seen' = n(), 'SDS' = sum(SDS),
+            'Even SDS+' = floor(round(sum(SDS) / n(), 3)/LeagueEven_SDS * 100)) %>%
+  select(Batter,BatterTeam,`Even Count Pitches Seen`,`Even SDS+`)
+
+Iowa_SDS_Even <- filter(Batter_SDS_Even,BatterTeam=="IOW_HAW")
+
+Batter_SDS_FirstPitch <- Test %>% filter(CountType=="First Pitch") %>% group_by(Batter,BatterTeam) %>%
+  summarize('First Pitches Seen' = n(), 'SDS' = sum(SDS),
+            'First Pitch SDS+' = floor(round(sum(SDS) / n(), 3)/LeagueFirst_SDS * 100)) %>%
+  select(Batter,BatterTeam,`First Pitches Seen`,`First Pitch SDS+`)
+
+Iowa_SDS_FirstPitch <- filter(Batter_SDS_FirstPitch,BatterTeam=="IOW_HAW")
+
+Batter_SDS_HitterAhead <- Test %>% filter(CountType=="Hitter Ahead") %>% group_by(Batter,BatterTeam) %>%
+  summarize('Ahead Pitches Seen' = n(), 'SDS' = sum(SDS),
+            'Hitter Ahead SDS+' = floor(round(sum(SDS) / n(), 3)/LeagueAhead_SDS * 100)) %>%
+  select(Batter,BatterTeam,`Ahead Pitches Seen`,`Hitter Ahead SDS+`)
+
+Iowa_SDS_HitterAhead <- filter(Batter_SDS_HitterAhead,BatterTeam=="IOW_HAW")
+
+Batter_SDS_PitcherAhead <- Test %>% filter(CountType=="Pitcher Ahead") %>% group_by(Batter,BatterTeam) %>%
+  summarize('Behind Pitches Seen' = n(), 'SDS' = sum(SDS),
+            'Pitcher Ahead SDS+' = floor(round(sum(SDS) / n(), 3)/LeagueBehind_SDS * 100)) %>%
+  select(Batter,BatterTeam,`Behind Pitches Seen`,`Pitcher Ahead SDS+`)
+
+Iowa_SDS_PitcherAhead <- filter(Batter_SDS_PitcherAhead,BatterTeam=="IOW_HAW")
+
+Iowa_SDS_Situations <- Reduce(inner_join,list(Iowa_SDS,Iowa_SDS_0Strikes,Iowa_SDS_1Strike,Iowa_SDS_2Strikes,
+                                              Iowa_SDS_FirstPitch,Iowa_SDS_Even,Iowa_SDS_HitterAhead,Iowa_SDS_PitcherAhead))
+
+Batter_SDS_Situations <- Reduce(inner_join,list(Batter_SDS,Batter_SDS_0Strikes,Batter_SDS_1Strike,Batter_SDS_2Strikes,
+                                                Batter_SDS_FirstPitch,Batter_SDS_Even,Batter_SDS_HitterAhead,
+                                                Batter_SDS_PitcherAhead))
+```
