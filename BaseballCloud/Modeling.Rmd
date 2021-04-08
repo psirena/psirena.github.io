@@ -1,0 +1,373 @@
+---
+title: "Modeling"
+author: "Paul Sirena"
+date: "7/26/2020"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r Packages,include=FALSE}
+library(dplyr)
+library(randomForest)
+library(ggplot2)
+library(plotly)
+library(gridExtra)
+library(grid)
+library(gtable)
+```
+
+```{r data,include=FALSE}
+data <- read.csv("baseballcloud_production.csv")
+```
+
+# Hard Hit Ball
+
+```{r Hard Hit Balls,echo=FALSE}
+Conf <- filter(data,league=="SEC")
+ev <- filter(Conf,!is.na(exit_velocity) & pitch_type=="Fastball")
+ev$hardhit <- ifelse(ev$exit_velocity >= 95,1,0)
+set.seed(7171998)
+Y <- as.matrix(ev[,105])
+X1 <- as.matrix(ev[,35:39])
+X2 <- as.matrix(ev[,41:52])
+X3 <- as.data.frame(ev[,12])
+colnames(X3) <- c("pitcher_name")
+X2 <- cbind.data.frame(X2,X3)
+X <- cbind.data.frame(X1,X2)
+XY <- na.omit(cbind.data.frame(Y,X))
+XY <- select(XY,Y,pitcher_name,velocity,spin_axis,vertical_break,vertical_release_angle,
+             horizontal_release_angle,spin_rate,release_height,extension,horizontal_break,
+             height_at_plate,side_at_plate,release_side)
+Predictors <- as.data.frame(lapply(XY[,3:13],as.numeric))
+Response <- t(as.data.frame((lapply(XY[,1],as.factor))))
+train_index <- sample(1:nrow(XY),floor(nrow(XY)*7/8),replace=FALSE)
+test_index <- setdiff(1:nrow(XY),train_index)
+ytrain <- as.matrix(Response[train_index,])
+ytest <- as.matrix(Response[test_index,])
+xtrain <- as.matrix(Predictors[train_index,])
+xtest <- as.matrix(Predictors[test_index,])
+train <- data.frame(na.omit(cbind.data.frame(ytrain,xtrain)))
+colnames(train)[1] <- "hardhit"
+train$hardhit <- as.factor(train$hardhit)
+test <- data.frame(na.omit(cbind.data.frame(ytest,xtest)))
+colnames(test)[1] <- "hardhit"
+test$hardhit <- as.factor(test$hardhit)
+
+hardhit_rf <- randomForest(hardhit~.,data=train)
+
+hardhit_rf_predict1 <- predict(hardhit_rf,test[,-1])
+hardhit_rf_predict2 <- predict(hardhit_rf,test[,-1],type="prob")
+
+Modeling_hardhit <- cbind(test,hardhit_rf_predict1,hardhit_rf_predict2[,2])
+Pitcher <- as.data.frame(XY$pitcher_name)[test_index,]
+ReleaseSide <- as.data.frame(XY$release_side)[test_index,]
+Modeling_hardhit$pitcher_name <- Pitcher
+Modeling_hardhit$release_side <- ReleaseSide
+
+round(sum(hardhit_rf_predict1==test[,1])/nrow(test) *100,2)
+```
+
+## Swing
+
+```{r Swing,echo=FALSE}
+swing <- filter(Conf,pitch_type=="Fastball" & (pitch_call!="BP" & pitch_call!="Live BP"))
+swing$swing <- ifelse(swing$pitch_call=="InPlay" | swing$pitch_call=="StrikeSwinging",1,0)
+set.seed(7171998)
+Y1 <- as.matrix(swing[,105])
+X11 <- as.matrix(swing[,35:39])
+X21 <- as.matrix(swing[,41:52])
+X31 <- as.data.frame(swing[,12])
+colnames(X31) <- c("pitcher_name")
+X21 <- cbind.data.frame(X21,X31)
+X1 <- cbind.data.frame(X11,X21)
+XY1 <- na.omit(cbind.data.frame(Y1,X1))
+XY1 <- select(XY1,Y1,pitcher_name,velocity,spin_axis,vertical_break,vertical_release_angle,
+             horizontal_release_angle,spin_rate,release_height,extension,horizontal_break,
+             height_at_plate,side_at_plate,release_side)
+Predictors1 <- as.data.frame(lapply(XY1[,3:13],as.numeric))
+Response1 <- t(as.data.frame((lapply(XY1[,1],as.factor))))
+train_index1 <- sample(1:nrow(XY1),floor(nrow(XY1)*7/8),replace=FALSE)
+test_index1 <- setdiff(1:nrow(XY1),train_index1)
+ytrain1 <- as.matrix(Response1[train_index1,])
+ytest1 <- as.matrix(Response1[test_index1,])
+xtrain1 <- as.matrix(Predictors1[train_index1,])
+xtest1 <- as.matrix(Predictors1[test_index1,])
+train1 <- data.frame(na.omit(cbind.data.frame(ytrain1,xtrain1)))
+colnames(train1)[1] <- "swing"
+train1$swing <- as.factor(train1$swing)
+test1 <- data.frame(na.omit(cbind.data.frame(ytest1,xtest1)))
+colnames(test1)[1] <- "swing"
+test1$swing <- as.factor(test1$swing)
+
+swing_rf <- randomForest(swing~.,data=train1)
+
+swing_rf_predict1 <- predict(swing_rf,test1[,-1])
+swing_rf_predict2 <- predict(swing_rf,test1[,-1],type="prob")
+
+Modeling_swing <- cbind(test1,swing_rf_predict1,swing_rf_predict2[,2])
+Pitcher1 <- as.data.frame(XY1$pitcher_name)[test_index1,]
+ReleaseSide1 <- as.data.frame(XY1$release_side)[test_index1,]
+Modeling_swing$pitcher_name <- Pitcher1
+Modeling_swing$release_side <- ReleaseSide1
+
+round(sum(swing_rf_predict1==test1[,1])/nrow(test1) *100,2)
+```
+
+# Whiff
+
+```{r Whiff,echo=FALSE}
+swing1 <- filter(swing,swing==1)
+swing1$whiff <- ifelse(swing1$pitch_call=="StrikeSwinging",1,0)
+set.seed(7171998)
+Y2 <- as.matrix(swing1[,106])
+X12 <- as.matrix(swing1[,35:39])
+X22 <- as.matrix(swing1[,41:52])
+X32 <- as.data.frame(swing1[,12])
+colnames(X32) <- c("pitcher_name")
+X22 <- cbind.data.frame(X22,X32)
+X2 <- cbind.data.frame(X12,X22)
+XY2 <- na.omit(cbind.data.frame(Y2,X2))
+XY2 <- select(XY2,Y2,pitcher_name,velocity,spin_axis,vertical_break,vertical_release_angle,
+            horizontal_release_angle,spin_rate,release_height,extension,horizontal_break,
+            height_at_plate,side_at_plate,release_side)
+Predictors2 <- as.data.frame(lapply(XY2[,3:13],as.numeric))
+Response2 <- t(as.data.frame((lapply(XY2[,1],as.factor))))
+train_index2 <- sample(1:nrow(XY2),floor(nrow(XY2)*7/8),replace=FALSE)
+test_index2 <- setdiff(1:nrow(XY2),train_index2)
+ytrain2 <- as.matrix(Response2[train_index2,])
+ytest2 <- as.matrix(Response2[test_index2,])
+xtrain2 <- as.matrix(Predictors2[train_index2,])
+xtest2 <- as.matrix(Predictors2[test_index2,])
+train2 <- data.frame(na.omit(cbind.data.frame(ytrain2,xtrain2)))
+colnames(train2)[1] <- "whiff"
+train2$whiff <- as.factor(train2$whiff)
+test2 <- data.frame(na.omit(cbind.data.frame(ytest2,xtest2)))
+colnames(test2)[1] <- "whiff"
+test2$whiff <- as.factor(test2$whiff)
+
+whiff_rf <- randomForest(whiff~.,data=train2)
+
+whiff_rf_predict1 <- predict(whiff_rf,test2[,-1])
+whiff_rf_predict2 <- predict(whiff_rf,test2[,-1],type="prob")
+
+Modeling_whiff <- cbind(test2,whiff_rf_predict1,whiff_rf_predict2[,2])
+Pitcher2 <- as.data.frame(XY2$pitcher_name)[test_index2,]
+ReleaseSide2 <- as.data.frame(XY2$release_side)[test_index2,]
+Modeling_whiff$pitcher_name <- Pitcher2
+Modeling_whiff$release_side <- ReleaseSide2
+
+round(sum(whiff_rf_predict1==test2[,1])/nrow(test2) *100,2)
+```
+
+# Launch Angle
+
+```{r Launch Angle,echo=FALSE}
+contact <- filter(Conf,pitch_type=="Fastball" & (pitch_call!="BP" & pitch_call!="Live BP") & pitch_call=="InPlay" &
+                    !is.na(launch_angle) & velocity >= 85)
+launch_angle <- as.matrix(contact[,54])
+X13 <- as.matrix(contact[,35:39])
+X23 <- as.matrix(contact[,41:52])
+X33 <- as.data.frame(contact[,12])
+colnames(X33) <- c("pitcher_name")
+X23 <- cbind.data.frame(X23,X33)
+X3 <- cbind.data.frame(X13,X23)
+XY3 <- na.omit(cbind.data.frame(launch_angle,X3))
+XY3 <- select(XY3,launch_angle,pitcher_name,velocity,spin_axis,vertical_break,vertical_release_angle,
+            horizontal_release_angle,extension,
+            height_at_plate,side_at_plate,spin_rate,release_height,horizontal_break,release_side)
+Predictors3 <- as.data.frame(lapply(XY3[,3:13],as.numeric))
+Response3 <- t(as.data.frame((lapply(XY3[,1],as.numeric))))
+train_index3 <- sample(1:nrow(XY3),floor(nrow(XY3)*7/8),replace=FALSE)
+test_index3 <- setdiff(1:nrow(XY3),train_index3)
+ytrain3 <- as.matrix(Response3[train_index3,])
+ytest3 <- as.matrix(Response3[test_index3,])
+xtrain3 <- as.matrix(Predictors3[train_index3,])
+xtest3 <- as.matrix(Predictors3[test_index3,])
+train3 <- data.frame(na.omit(cbind.data.frame(ytrain3,xtrain3)))
+colnames(train3)[1] <- "launch_angle"
+test3 <- data.frame(na.omit(cbind.data.frame(ytest3,xtest3)))
+colnames(test3)[1] <- "launch_angle"
+
+la_rf <- randomForest(launch_angle~.,data=train3,type="regression")
+
+la_rf_predict <- predict(la_rf,test3[,-1])
+
+Modeling_la <- cbind(test3,la_rf_predict)
+Pitcher3 <- as.data.frame(XY3$pitcher_name)[test_index3,]
+ReleaseSide3 <- as.data.frame(XY3$release_side)[test_index3,]
+Modeling_la$pitcher_name <- Pitcher3
+Modeling_la$release_side <- ReleaseSide3
+
+mean(abs(test3$launch_angle - la_rf_predict))
+summary(abs(test3$launch_angle - la_rf_predict))
+1 - (sum((test3$launch_angle-la_rf_predict)^2)/sum((test3$launch_angle-mean(test3$launch_angle))^2))
+```
+
+# Exit Velocity
+
+```{r Exit Velocity,echo=FALSE}
+contact1 <- filter(Conf,pitch_type=="Fastball" & (pitch_call!="BP" & pitch_call!="Live BP") & pitch_call=="InPlay" &
+                    !is.na(exit_velocity))
+exit_velocity <- as.matrix(contact1[,53])
+X14 <- as.matrix(contact1[,35:39])
+X24 <- as.matrix(contact1[,41:52])
+X34 <- as.data.frame(contact1[,12])
+colnames(X34) <- c("pitcher_name")
+X24 <- cbind.data.frame(X24,X34)
+X4 <- cbind.data.frame(X14,X24)
+XY4 <- na.omit(cbind.data.frame(exit_velocity,X4))
+XY4 <- select(XY4,exit_velocity,pitcher_name,velocity,spin_axis,vertical_break,vertical_release_angle,
+            horizontal_release_angle,spin_rate,release_height,extension,horizontal_break,
+            height_at_plate,side_at_plate,release_side)
+Predictors4 <- as.data.frame(lapply(XY4[,3:13],as.numeric))
+Response4 <- t(as.data.frame((lapply(XY4[,1],as.numeric))))
+train_index4 <- sample(1:nrow(XY4),floor(nrow(XY4)*7/8),replace=FALSE)
+test_index4 <- setdiff(1:nrow(XY4),train_index4)
+ytrain4 <- as.matrix(Response4[train_index4,])
+ytest4 <- as.matrix(Response4[test_index4,])
+xtrain4 <- as.matrix(Predictors4[train_index4,])
+xtest4 <- as.matrix(Predictors4[test_index4,])
+train4 <- data.frame(na.omit(cbind.data.frame(ytrain4,xtrain4)))
+colnames(train4)[1] <- "exit_velocity"
+test4 <- data.frame(na.omit(cbind.data.frame(ytest4,xtest4)))
+colnames(test4)[1] <- "exit_velocity"
+
+ev_rf <- randomForest(exit_velocity~.,data=train4,type="regression")
+
+ev_rf_predict <- predict(ev_rf,test4[,-1])
+
+Modeling_ev <- cbind(test4,ev_rf_predict)
+Pitcher4 <- as.data.frame(XY4$pitcher_name)[test_index4,]
+ReleaseSide4 <- as.data.frame(XY4$release_side)[test_index4,]
+Modeling_ev$pitcher_name <- Pitcher4
+Modeling_ev$release_side <- ReleaseSide4
+
+mean(abs(test4$exit_velocity - ev_rf_predict))
+summary(abs(test4$exit_velocity - ev_rf_predict))
+1 - (sum((test4$exit_velocity-ev_rf_predict)^2)/sum((test4$exit_velocity-mean(test4$exit_velocity))^2))
+```
+
+```{r All Models,echo=FALSE}
+Fastballs <- filter(data,pitch_type=="Fastball")
+Hancock <- cbind(Fastballs[,12],Fastballs[35:39],Fastballs[41:52])
+colnames(Hancock)[1] <- "pitcher_name"
+Hancock <- Hancock %>% filter(pitcher_name=="Hancock, Emerson") %>% na.omit %>% distinct
+
+Hancock$swing_prob <- predict(swing_rf,Hancock[,-1],type="prob")[,2]
+Hancock$whiff_prob <- predict(whiff_rf,Hancock[,-1],type="prob")[,2] * Hancock$swing_prob
+Hancock$hardhit_prob <- predict(hardhit_rf,Hancock[,-1],type="prob")[,2] * (1 - Hancock$whiff_prob)
+Hancock$swing_prob <- Hancock$swing_prob * 100
+Hancock$whiff_prob <- round(Hancock$whiff_prob * 100,1)
+Hancock$hardhit_prob <- round(Hancock$hardhit_prob * 100,1)
+
+Hancock$predictedLA <- predict(la_rf,Hancock[,-1])
+Hancock$predictedEV <- predict(ev_rf,Hancock[-1])
+
+Hancock_for_table <- head(Hancock) %>%
+  select(velocity,spin_rate,swing_prob,whiff_prob,hardhit_prob)
+Hancock_for_table$velocity <- round(Hancock_for_table$velocity,1)
+Hancock_for_table$spin_rate <- floor(Hancock_for_table$spin_rate)
+t1 <- tableGrob(Hancock_for_table[order(Hancock_for_table$velocity,decreasing=T),])
+title <- textGrob(paste("Emerson Hancock",sep=""),
+                  gp=gpar(fontsize=12))
+padding <- unit(5,"mm")
+table <- gtable_add_rows(t1,heights = grobHeight(title) + padding,pos = 0)
+table <- gtable_add_grob(table, title, 1, 1, 1, ncol(table))
+table$layout$clip <- "off"
+grid.newpage()
+grid.draw(table)
+```
+
+## Predicting Distance
+
+```{r Distance,echo=FALSE}
+BallFlight <- data %>% filter(!is.na(exit_velocity) & !is.na(launch_angle) & !is.na(distance)) %>%
+  select(exit_velocity,launch_angle,distance) %>% distinct %>%
+  filter(distance <= 470 & distance > 1 & exit_velocity <= 125 & exit_velocity >= 70)
+
+distance_lm <- lm(distance~exit_velocity*launch_angle,data=BallFlight)
+summary(distance_lm)$r.squared
+distance_lm_predict <- predict(distance_lm,data=BallFlight)
+```
+
+# Justin Verlander
+
+```{r Verlander,echo=FALSE}
+Verlander2020 <- read.csv("Verlander.csv")
+Verlander2019 <- read.csv("VerlanderAll.csv")
+```
+
+```{r Modeling,echo=FALSE}
+VerlanderFF_train1 <- Verlander2019 %>% filter(pitch_type=="FF") %>%
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z) %>%
+  na.omit
+VerlanderFF_train1[,2:11] <- lapply(VerlanderFF_train1[,2:11],as.numeric)
+
+VerlanderFF_train1$swing <- ifelse(VerlanderFF_train1$description != "ball" & 
+                                     VerlanderFF_train1$description != "blocked_ball" &
+                                     VerlanderFF_train1$description != "called_strike",1,0)
+VerlanderFF_train1$contact <- ifelse(VerlanderFF_train1$swing == 1 & 
+                                       (VerlanderFF_train1$description == "hit_into_play" |
+                                          VerlanderFF_train1$description == "hit_into_play_no_out" |
+                                          VerlanderFF_train1$description == "hit_into_play_score"),1,0)
+VerlanderFF_train1$hardhit <- ifelse(VerlanderFF_train1$launch_speed >= 95,1,0)
+
+VerlanderFF_train1$swing <- as.factor(VerlanderFF_train1$swing)
+Verlander_swing_rf <- randomForest(swing~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+release_extension+
+                                     plate_x+plate_z,data=VerlanderFF_train1)
+
+VerlanderFF_test1 <- Verlander2020 %>% filter(pitch_type=="FF") %>%
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z) %>%
+  na.omit
+VerlanderFF_test1[,2:11] <- lapply(VerlanderFF_test1[,2:11],as.numeric)
+VerlanderFF_test1$swing <- as.factor(ifelse(VerlanderFF_test1$description != "ball" & 
+                                              VerlanderFF_test1$description != "blocked_ball" &
+                                              VerlanderFF_test1$description != "called_strike",1,0))
+
+Verlander_swing_rf_predict <- predict(Verlander_swing_rf,VerlanderFF_test1[,2:11],type="prob")[,2]
+Verlander_swing_rf_predict1 <- predict(Verlander_swing_rf,VerlanderFF_test1[,2:11])
+
+VerlanderFF_rf <- cbind(VerlanderFF_test1,Verlander_swing_rf_predict,Verlander_swing_rf_predict1)
+colnames(VerlanderFF_rf)[13] <- "swing_prob"
+colnames(VerlanderFF_rf)[14] <- "pSwing"
+
+a <- ggplot(VerlanderFF_rf) + labs(x = "Pitcher's View", y = "") + ggtitle("Verlander Swing Results") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_segment(aes(x = -0.95, y = 1.6, xend = 0.95, yend = 1.6)) +
+  geom_segment(aes(x = 0.95, y =1.6, xend = 0.95, yend = 3.6)) +
+  geom_segment(aes(x = -0.95, y = 3.6, xend = 0.95, yend = 3.6)) +
+  geom_segment(aes(x = -0.95, y =1.6, xend = -0.95, yend = 3.6)) +
+  xlim(-2,2) + ylim(0,4.5) +
+  geom_point(aes(y=plate_z,x=plate_x,color=swing,size=1.5)) +
+  scale_color_manual(labels = c("No Swing", "Swing"),values=c("Blue","Red"))
+
+b <- ggplot(VerlanderFF_rf) + labs(x = "Pitcher's View", y = "") + ggtitle("Verlander Predicted Swing Results") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_segment(aes(x = -0.95, y = 1.6, xend = 0.95, yend = 1.6)) +
+  geom_segment(aes(x = 0.95, y =1.6, xend = 0.95, yend = 3.6)) +
+  geom_segment(aes(x = -0.95, y = 3.6, xend = 0.95, yend = 3.6)) +
+  geom_segment(aes(x = -0.95, y =1.6, xend = -0.95, yend = 3.6)) +
+  xlim(-2,2) + ylim(0,4.5) +
+  geom_point(aes(y=plate_z,x=plate_x,color=pSwing,size=1.5)) +
+  scale_color_manual(labels = c("No Swing", "Swing"),values=c("Blue","Red"))
+
+c <- ggplot(VerlanderFF_rf) + labs(x = "Pitcher's View", y = "") + ggtitle("Verlander Predicted Swing Results") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_segment(aes(x = -0.95, y = 1.6, xend = 0.95, yend = 1.6)) +
+  geom_segment(aes(x = 0.95, y =1.6, xend = 0.95, yend = 3.6)) +
+  geom_segment(aes(x = -0.95, y = 3.6, xend = 0.95, yend = 3.6)) +
+  geom_segment(aes(x = -0.95, y =1.6, xend = -0.95, yend = 3.6)) +
+  xlim(-2,2) + ylim(0,4.5) +
+  geom_point(aes(y=plate_z,x=plate_x,color=swing,size=swing_prob)) +
+  scale_color_manual(labels = c("No Swing", "Swing"),values=c("Blue","Red"))
+
+a
+b
+c
+```
+
+

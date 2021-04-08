@@ -1,0 +1,149 @@
+---
+title: "Hancock and Wilcox"
+author: "Paul Sirena"
+date: "6/12/2020"
+output: html_document
+---
+
+```{r Packages,include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(grid)
+library(gtable)
+library(gridExtra)
+```
+
+```{r Data,include=FALSE}
+data <- read.csv("baseballcloud_production.csv")
+```
+
+
+```{r Pitchers,include=FALSE}
+Hancock <- distinct(filter(data,pitcher_name=="Hancock, Emerson"))
+Wilcox <- distinct(filter(data,pitcher_name=="Wilcox, Cole" & !is.na(velocity)))
+```
+
+```{r Heat Maps,include=FALSE}
+Heat_Map <- function(x,title) {
+  ggplot(data = x, aes(x = side_at_plate, y = height_at_plate)) + 
+  stat_density_2d(geom = "tile", aes(fill = ..density..), contour = FALSE) +
+  xlim(-1.5,1.5) + ylim(0,4.5) + 
+  labs(x = "Pitcher's View", y = "") + ggtitle(title) +
+  geom_segment(aes(x = -0.95, y = 1.6, xend = 0.95, yend = 1.6)) +
+  geom_segment(aes(x = 0.95, y =1.6, xend = 0.95, yend = 3.6)) +
+  geom_segment(aes(x = -0.95, y = 3.6, xend = 0.95, yend = 3.6)) +
+  geom_segment(aes(x = -0.95, y =1.6, xend = -0.95, yend = 3.6)) +
+  scale_fill_gradientn(colors = c("white", "blue", "yellow", "red"), 
+                       values = scales::rescale(c(0, .05, 0.10, 0.15, .20))) +
+  theme(legend.position="none",plot.title = element_text(hjust = 0.5))
+}
+```
+
+
+```{r League Stats,include=FALSE}
+League <- filter(data,(pitch_type=="Fastball" |
+                   pitch_type=="Changeup" | pitch_type=="Slider" | pitch_type=="Curveball") &
+                   (!is.na(strikes) & strikes<3))
+LeagueStats <- League %>% group_by(pitch_type,strikes) %>%
+  summarize('LeagueStrike%' = round(sum(pitch_call!="BallCalled" & pitch_call!="HitByPitch")/n()*100,1),
+            'LeagueWhiff%' = round(sum(pitch_call=="StrikeSwinging")/
+                               sum(pitch_call!="BallCalled" & pitch_call!="HitByPitch")*100,1))
+
+PitcherStats <- League %>% group_by(pitcher_name,pitch_type,strikes) %>%
+  summarize('PitcherStrikePerc' = round(sum(pitch_call!="BallCalled" & pitch_call!="HitByPitch")/n()*100,1),
+            'PitcherWhiffPerc' = round(sum(pitch_call=="StrikeSwinging")/
+                               sum(pitch_call!="BallCalled" & pitch_call!="HitByPitch")*100,1),n=n()) %>%
+  filter(n > 100) %>% group_by(pitch_type,strikes) %>%
+  summarize('Strike%SD' = round(sd(PitcherStrikePerc),1),
+            'Whiff%SD' = round(sd(PitcherWhiffPerc,na.rm=TRUE),1))
+```
+
+
+```{r Hancock Tables,echo=FALSE}
+Hancock_a <- Hancock %>% group_by(pitch_type) %>%
+  summarize(usage = round(n()/nrow(Hancock)*100,1),
+            avg_velo = round(mean(velocity),1), max_velo = round(max(velocity),1),
+            avg_rpm = floor(mean(spin_rate,na.rm=TRUE)))
+
+t1 <- tableGrob(Hancock_a[order(Hancock_a$usage,decreasing=T),])
+title <- textGrob(paste("Emerson Hancock",sep=""),
+                  gp=gpar(fontsize=12))
+padding <- unit(5,"mm")
+table <- gtable_add_rows(t1,heights = grobHeight(title) + padding,pos = 0)
+table <- gtable_add_grob(table, title, 1, 1, 1, ncol(table))
+table$layout$clip <- "off"
+grid.newpage()
+grid.draw(table)
+
+Hancock_b <- Hancock %>% group_by(pitch_type,strikes) %>%
+  summarize('Strike%' = round(sum(pitch_call!="BallCalled" & pitch_call!="HitByPitch")/n()*100,1),
+            'Whiff%' = round(sum(pitch_call=="StrikeSwinging")/
+                               sum(pitch_call!="BallCalled" & pitch_call!="HitByPitch")*100,1))
+
+Hancock_c <- left_join(Hancock_b,LeagueStats,by=c("pitch_type","strikes"))
+Hancock_d <- Hancock_c[,c(1,2,3,5,4,6)]
+
+t2 <- tableGrob(Hancock_d)
+title <- textGrob(paste("Emerson Hancock",sep=""),
+                  gp=gpar(fontsize=12))
+padding <- unit(5,"mm")
+table <- gtable_add_rows(t2,heights = grobHeight(title) + padding,pos = 0)
+table <- gtable_add_grob(table, title, 1, 1, 1, ncol(table))
+table$layout$clip <- "off"
+grid.newpage()
+grid.draw(table)
+
+Heat_Map(filter(Hancock,(pitch_call=="StrikeSwinging" | pitch_call=="StrikeCalled") & pitch_type=="Fastball"),
+         "Hancock Fastball Strikes")
+Heat_Map(filter(Hancock,pitch_call=="StrikeSwinging" & pitch_type=="Fastball" & strikes==2),
+         "Hancock Fastball 2-Strike Whiffs")
+         
+Heat_Map(filter(Hancock,pitch_call=="StrikeSwinging" & pitch_type=="Slider"),"Hancock Slider Whiffs")
+Heat_Map(filter(Hancock,pitch_type=="Slider"),"Hancock Sliders")
+```
+
+```{r Wilcox Tables,echo=FALSE}
+Wilcox_a <- Wilcox %>% group_by(pitch_type) %>%
+  summarize(usage = round(n()/nrow(Wilcox)*100,1),
+            avg_velo = round(mean(velocity),1), max_velo = round(max(velocity),1),
+            avg_rpm = floor(mean(spin_rate,na.rm=TRUE)))
+
+t3 <- tableGrob(Wilcox_a[order(Wilcox_a$usage,decreasing=T),])
+title <- textGrob(paste("Cole Wilcox",sep=""),
+                  gp=gpar(fontsize=12))
+padding <- unit(5,"mm")
+table <- gtable_add_rows(t3,heights = grobHeight(title) + padding,pos = 0)
+table <- gtable_add_grob(table, title, 1, 1, 1, ncol(table))
+table$layout$clip <- "off"
+grid.newpage()
+grid.draw(table)
+
+Wilcox_b <- Wilcox %>% group_by(pitch_type,strikes) %>%
+  summarize('Strike%' = round(sum(pitch_call!="BallCalled" & pitch_call!="HitByPitch")/n()*100,1),
+            'Whiff%' = round(sum(pitch_call=="StrikeSwinging")/
+                               sum(pitch_call!="BallCalled" & pitch_call!="HitByPitch")*100,1))
+
+Wilcox_c <- left_join(Wilcox_b,LeagueStats,by=c("pitch_type","strikes"))
+Wilcox_d <- Wilcox_c[,c(1,2,3,5,4,6)]
+
+t4 <- tableGrob(Wilcox_d)
+title <- textGrob(paste("Emerson Wilcox",sep=""),
+                  gp=gpar(fontsize=12))
+padding <- unit(5,"mm")
+table <- gtable_add_rows(t4,heights = grobHeight(title) + padding,pos = 0)
+table <- gtable_add_grob(table, title, 1, 1, 1, ncol(table))
+table$layout$clip <- "off"
+grid.newpage()
+grid.draw(table)
+         
+Heat_Map(filter(Wilcox,pitch_call=="StrikeSwinging" & pitch_type=="Changeup"),"Wilcox Changeup Whiffs")
+Heat_Map(filter(Wilcox,pitch_type=="Changeup" & batter_handedness=="L"),"Wilcox Changeups")
+
+HardHitRates <- data %>% filter(pitcher_name=="Hancock, Emerson" | pitcher_name=="Wilcox, Cole") %>%
+  group_by(pitcher_name,pitch_type) %>% 
+  summarize(n_hardhit = sum(exit_velocity>=95,na.rm=TRUE), n_inplay = sum(pitch_call=="InPlay"), n=n(),
+            hardhitrate = round(n_hardhit/n_inplay*100,1))
+```
+
+
+
