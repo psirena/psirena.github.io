@@ -1,0 +1,54 @@
+---
+title: "NFL Receving Modeling"
+author: "Paul Sirena"
+date: "11/27/2020"
+output: html_document
+---
+
+```{r Libraries}
+library(ggplot2)
+library(dplyr)
+library(MASS)
+library(rvest)
+
+# getting data we will use
+
+Rec19 <- read.csv("Rec19.csv")
+Rec20 <- read.csv("Rec20.csv")[,1:15]
+
+names(Rec19) <- c("X","Player Name","Team","Pos","Cush","Sep","TAY","TAY%","Rec","Tar","Ctch%","Yds","TD","YAC/R","xYAC/R","+/-")
+Rec19 <- Rec19[,2:ncol(Rec19)]
+Rec19$TE <- ifelse(Rec19$Pos=="TE",1,0)
+
+names(Rec20) <- c("Player Name","Team","Pos","Cush","Sep","TAY","TAY%","Rec","Tar","Ctch%","Yds","TD","YAC/R","xYAC/R","+/-")
+Rec20$TE <- ifelse(Rec20$Pos=="TE",1,0)
+```
+
+```{r Receiving Yards Model}
+fit <- lm(Yds~TE+Cush+TAY+Tar+`Ctch%`+`xYAC/R`+`+/-`,data=Rec19) # Fit with all variables after multicollinearity accounted for
+summary(fit)
+step <- step(fit, direction="both") # Go through possible models
+newfit <- lm(Yds ~ (TAY + Tar + `Ctch%` + `xYAC/R` + `+/-`)^5,data=Rec19) # Model with TE and Cush removed
+summary(newfit)
+noTar <- lm(Yds~(TAY + `Ctch%` + `xYAC/R` + `+/-`)^4,data=Rec19) # Removing Target due to higher p-value than desired
+summary(noTar)
+
+# stepfit gives the best model
+```
+
+```{r Running Model on 2020 Data}
+# Putting predicted values into data
+
+Rec19$xYds <- floor(predict(newfit,Rec19))
+Rec20$xYds <- floor(predict(newfit,Rec20))
+Rec20$Diff <- Rec20$xYds - Rec20$Yds
+
+qplot(x=Yds,y=Diff,data=Rec20,geom="point") # Plotting residuals
+Rec20 <- subset(Rec20,`Player Name` != "Deebo Samuel") # Removing outlier
+qqplot(x=Rec20$Yds,y=Rec20$Diff) # Plotting to check for normality of residuals
+```
+
+
+
+
+
