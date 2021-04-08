@@ -1,0 +1,418 @@
+---
+title: "Nola Blog Post"
+author: "Paul Sirena"
+date: "7/28/2020"
+output: html_document
+---
+
+```{r Packages,include=FALSE}
+library(randomForest)
+library(ggplot2)
+library(dplyr)
+library(data.table)
+library(gridExtra)
+library(grid)
+library(gtable)
+```
+
+```{r Nola Data,include=FALSE}
+Nola_1819 <- read.csv("Nola_1819.csv")
+```
+
+
+```{r Seasons,include=FALSE}
+Nola_18 <- Nola_1819 %>% filter(game_year==2018)
+Nola_18FF <- Nola_18 %>% filter(pitch_type=="FF")
+Nola_18FT <- Nola_18 %>% filter(pitch_type=="FT")
+Nola_18CH <- Nola_18 %>% filter(pitch_type=="CH")
+Nola_18KC <- Nola_18 %>% filter(pitch_type=="KC")
+
+Nola_19 <- Nola_1819 %>% filter(game_year==2019)
+Nola_19FF <- Nola_19 %>% filter(pitch_type=="FF")
+Nola_19FT <- Nola_19 %>% filter(pitch_type=="FT")
+Nola_19CH <- Nola_19 %>% filter(pitch_type=="CH")
+Nola_19KC <- Nola_19 %>% filter(pitch_type=="KC")
+```
+
+```{r Table,echo=FALSE}
+Nola_18_Table <- Nola_18 %>% group_by(pitch_name) %>%
+  summarize('Usage' = round(n() / nrow(Nola_18) * 100,1), 'Avg_Velo' = round(mean(release_speed),1),
+            'BABIP' = round(sum(babip_value==1) / 
+                              sum(events=="single"|events=="double"|events=="triple"|events=="double_play"|
+                                    events=="field_error"|events=="field_out"|events=="fielders_choice_out"|
+                                    events=="force_out"|events=="grounded_into_double_play"|events=="sac_fly"|
+                                    events=="sac_bunt"),3),
+            'CSW%' = round(sum(description=="called_strike"|description=="swinging_strike"|
+                                 description=="swinging_strike_blocked"|description=="foul_tip"|
+                                 description=="missed_bunt") / n() * 100,1))
+colnames(Nola_18_Table) <- c("Pitch Name","Usage","Avg Velo","BABIP","CSW%")
+
+Nola_19_Table <- Nola_19 %>% group_by(pitch_name) %>%
+  summarize('Usage' = round(n() / nrow(Nola_19) * 100,1), 'Avg_Velo' = round(mean(release_speed),1),
+            'BABIP' = round(sum(babip_value==1) / 
+                              sum(events=="single"|events=="double"|events=="triple"|events=="double_play"|
+                                    events=="field_error"|events=="field_out"|events=="fielders_choice_out"|
+                                    events=="force_out"|events=="grounded_into_double_play"|events=="sac_fly"|
+                                    events=="sac_bunt"),3),
+            'CSW%' = round(sum(description=="called_strike"|description=="swinging_strike"|
+                                 description=="swinging_strike_blocked"|description=="foul_tip"|
+                                 description=="missed_bunt") / n() * 100,1))
+colnames(Nola_19_Table) <- c("Pitch Name","Usage","Avg Velo","BABIP","CSW%")
+
+t3 <- tableGrob(Nola_19_Table)
+title <- textGrob(paste("  Aaron Nola 2019",sep=""),
+                  gp=gpar(fontsize=12))
+padding <- unit(5,"mm")
+table <- gtable_add_rows(t3,heights = grobHeight(title) + padding,pos = 0)
+table <- gtable_add_grob(table, title, 1, 1, 1, ncol(table))
+table$layout$clip <- "off"
+grid.newpage()
+grid.draw(table)
+```
+
+```{r Modeling FF,echo=FALSE}
+NolaFFtrain <- Nola_18FF %>%
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z)
+
+NolaFFtrain[,2:11] <- lapply(NolaFFtrain[,2:11],as.numeric)
+
+NolaFFtrain$swing <- ifelse(NolaFFtrain$description != "ball" & 
+                                     NolaFFtrain$description != "blocked_ball" &
+                                     NolaFFtrain$description != "called_strike",1,0)
+NolaFFtrain$whiff <- ifelse(NolaFFtrain$description=="swinging_strike",1,0)
+NolaFFtrain$contact <- ifelse(NolaFFtrain$launch_speed != "null",1,0)
+NolaFFtrain$hardhit <- ifelse(NolaFFtrain$contact==1 & NolaFFtrain$launch_speed>=95,1,0)
+
+NolaFFtrain$swing <- as.factor(NolaFFtrain$swing)
+NolaFFtrain$whiff <- as.factor(NolaFFtrain$whiff)
+NolaFFtrain$contact <- as.factor(NolaFFtrain$contact)
+NolaFFtrain$hardhit <- as.factor(NolaFFtrain$hardhit)
+
+NolaFF_swing_rf <- randomForest(swing~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+release_extension+
+                                  plate_x+plate_z,data=NolaFFtrain)
+NolaFF_whiff_rf <- randomForest(whiff~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+release_extension+
+                                  plate_x+plate_z,data=filter(NolaFFtrain,swing==1))
+NolaFF_hardhit_rf <- randomForest(hardhit~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+
+                                    release_extension+plate_x+
+                                    plate_z,data=filter(NolaFFtrain,contact==1))
+
+NolaFFtest <- Nola_19FF %>% 
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z) %>%
+  na.omit
+NolaFFtest[,4:11] <- lapply(NolaFFtest[,4:11],as.numeric)
+
+NolaFFtest$swing <- ifelse(NolaFFtest$description != "ball" & 
+                                     NolaFFtest$description != "blocked_ball" &
+                                     NolaFFtest$description != "called_strike",1,0)
+NolaFFtest$whiff <- ifelse(NolaFFtest$description=="swinging_strike",1,0)
+NolaFFtest$contact <- ifelse(NolaFFtest$launch_speed != "null",1,0)
+NolaFFtest$hardhit <- ifelse(NolaFFtest$contact==1 & NolaFFtest$launch_speed>=95,1,0)
+
+NolaFFtest$swing <- as.factor(NolaFFtest$swing)
+NolaFFtest$whiff <- as.factor(NolaFFtest$whiff)
+NolaFFtest$contact <- as.factor(NolaFFtest$contact)
+NolaFFtest$hardhit <- as.factor(NolaFFtest$hardhit)
+
+NolaFFtest$xSwing <- predict(NolaFF_swing_rf,NolaFFtest[,4:11])
+
+NolaFFtest_swing <- filter(NolaFFtest,swing==1)
+NolaFFtest_swing$xWhiff <- predict(NolaFF_whiff_rf,NolaFFtest_swing[,4:11])
+
+NolaFFtest_contact <- filter(NolaFFtest,contact==1)
+NolaFFtest_contact$xHardHit <- predict(NolaFF_hardhit_rf,NolaFFtest_contact[,4:11])
+```
+
+```{r Modeling KC,echo=FALSE}
+NolaKCtrain <- Nola_18KC %>%
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z)
+
+NolaKCtrain[,2:11] <- lapply(NolaKCtrain[,2:11],as.numeric)
+
+NolaKCtrain$swing <- ifelse(NolaKCtrain$description != "ball" & 
+                                     NolaKCtrain$description != "blocked_ball" &
+                                     NolaKCtrain$description != "called_strike",1,0)
+NolaKCtrain$whiff <- ifelse(NolaKCtrain$description=="swinging_strike",1,0)
+NolaKCtrain$contact <- ifelse(NolaKCtrain$launch_speed != "null",1,0)
+NolaKCtrain$hardhit <- ifelse(NolaKCtrain$contact==1 & NolaKCtrain$launch_speed>=95,1,0)
+
+NolaKCtrain$swing <- as.factor(NolaKCtrain$swing)
+NolaKCtrain$whiff <- as.factor(NolaKCtrain$whiff)
+NolaKCtrain$contact <- as.factor(NolaKCtrain$contact)
+NolaKCtrain$hardhit <- as.factor(NolaKCtrain$hardhit)
+
+NolaKC_swing_rf <- randomForest(swing~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+release_extension+
+                                  plate_x+plate_z,data=NolaKCtrain)
+NolaKC_whiff_rf <- randomForest(whiff~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+release_extension+
+                                  plate_x+plate_z,data=filter(NolaKCtrain,swing==1))
+NolaKC_hardhit_rf <- randomForest(hardhit~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+
+                                    release_extension+plate_x+
+                                    plate_z,data=filter(NolaKCtrain,contact==1))
+
+NolaKCtest <- Nola_19KC %>% 
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z) %>%
+  na.omit
+NolaKCtest[,4:11] <- lapply(NolaKCtest[,4:11],as.numeric)
+
+NolaKCtest$swing <- ifelse(NolaKCtest$description != "ball" & 
+                                     NolaKCtest$description != "blocked_ball" &
+                                     NolaKCtest$description != "called_strike",1,0)
+NolaKCtest$whiff <- ifelse(NolaKCtest$description=="swinging_strike",1,0)
+NolaKCtest$contact <- ifelse(NolaKCtest$launch_speed != "null",1,0)
+NolaKCtest$hardhit <- ifelse(NolaKCtest$contact==1 & NolaKCtest$launch_speed>=95,1,0)
+
+NolaKCtest$swing <- as.factor(NolaKCtest$swing)
+NolaKCtest$whiff <- as.factor(NolaKCtest$whiff)
+NolaKCtest$contact <- as.factor(NolaKCtest$contact)
+NolaKCtest$hardhit <- as.factor(NolaKCtest$hardhit)
+
+NolaKCtest$xSwing <- predict(NolaKC_swing_rf,NolaKCtest[,4:11])
+
+NolaKCtest_swing <- filter(NolaKCtest,swing==1)
+NolaKCtest_swing$xWhiff <- predict(NolaKC_whiff_rf,NolaKCtest_swing[,4:11])
+
+NolaKCtest_contact <- filter(NolaKCtest,contact==1)
+NolaKCtest_contact$xHardHit <- predict(NolaKC_hardhit_rf,NolaKCtest_contact[,4:11])
+```
+
+```{r Modeling FT,echo=FALSE}
+NolaFTtrain <- Nola_18FT %>%
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z)
+
+NolaFTtrain[,2:11] <- lapply(NolaFTtrain[,2:11],as.numeric)
+
+NolaFTtrain$swing <- ifelse(NolaFTtrain$description != "ball" & 
+                                     NolaFTtrain$description != "blocked_ball" &
+                                     NolaFTtrain$description != "called_strike",1,0)
+NolaFTtrain$whiff <- ifelse(NolaFTtrain$description=="swinging_strike",1,0)
+NolaFTtrain$contact <- ifelse(NolaFTtrain$launch_speed != "null",1,0)
+NolaFTtrain$hardhit <- ifelse(NolaFTtrain$contact==1 & NolaFTtrain$launch_speed>=95,1,0)
+
+NolaFTtrain$swing <- as.factor(NolaFTtrain$swing)
+NolaFTtrain$whiff <- as.factor(NolaFTtrain$whiff)
+NolaFTtrain$contact <- as.factor(NolaFTtrain$contact)
+NolaFTtrain$hardhit <- as.factor(NolaFTtrain$hardhit)
+
+NolaFT_swing_rf <- randomForest(swing~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+release_extension+
+                                  plate_x+plate_z,data=NolaFTtrain)
+NolaFT_whiff_rf <- randomForest(whiff~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+release_extension+
+                                  plate_x+plate_z,data=filter(NolaFTtrain,swing==1))
+NolaFT_hardhit_rf <- randomForest(hardhit~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+
+                                    release_extension+plate_x+
+                                    plate_z,data=filter(NolaFTtrain,contact==1))
+
+NolaFTtest <- Nola_19FT %>% 
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z) %>%
+  na.omit
+NolaFTtest[,4:11] <- lapply(NolaFTtest[,4:11],as.numeric)
+
+NolaFTtest$swing <- ifelse(NolaFTtest$description != "ball" & 
+                                     NolaFTtest$description != "blocked_ball" &
+                                     NolaFTtest$description != "called_strike",1,0)
+NolaFTtest$whiff <- ifelse(NolaFTtest$description=="swinging_strike",1,0)
+NolaFTtest$contact <- ifelse(NolaFTtest$launch_speed != "null",1,0)
+NolaFTtest$hardhit <- ifelse(NolaFTtest$contact==1 & NolaFTtest$launch_speed>=95,1,0)
+
+NolaFTtest$swing <- as.factor(NolaFTtest$swing)
+NolaFTtest$whiff <- as.factor(NolaFTtest$whiff)
+NolaFTtest$contact <- as.factor(NolaFTtest$contact)
+NolaFTtest$hardhit <- as.factor(NolaFTtest$hardhit)
+
+NolaFTtest$xSwing <- predict(NolaFT_swing_rf,NolaFTtest[,4:11])
+
+NolaFTtest_swing <- filter(NolaFTtest,swing==1)
+NolaFTtest_swing$xWhiff <- predict(NolaFT_whiff_rf,NolaFTtest_swing[,4:11])
+
+NolaFTtest_contact <- filter(NolaFTtest,contact==1)
+NolaFTtest_contact$xHardHit <- predict(NolaFT_hardhit_rf,NolaFTtest_contact[,4:11])
+```
+
+```{r Modeling CH,echo=FALSE}
+NolaCHtrain <- Nola_18CH %>%
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z)
+
+NolaCHtrain[,2:11] <- lapply(NolaCHtrain[,2:11],as.numeric)
+
+NolaCHtrain$swing <- ifelse(NolaCHtrain$description != "ball" & 
+                                     NolaCHtrain$description != "blocked_ball" &
+                                     NolaCHtrain$description != "called_strike",1,0)
+NolaCHtrain$whiff <- ifelse(NolaCHtrain$description=="swinging_strike",1,0)
+NolaCHtrain$contact <- ifelse(NolaCHtrain$launch_speed != "null",1,0)
+NolaCHtrain$hardhit <- ifelse(NolaCHtrain$contact==1 & NolaCHtrain$launch_speed>=95,1,0)
+
+NolaCHtrain$swing <- as.factor(NolaCHtrain$swing)
+NolaCHtrain$whiff <- as.factor(NolaCHtrain$whiff)
+NolaCHtrain$contact <- as.factor(NolaCHtrain$contact)
+NolaCHtrain$hardhit <- as.factor(NolaCHtrain$hardhit)
+NolaCHtrain <- data.table(NolaCHtrain)
+NolaCHtrain <- na.omit(NolaCHtrain,cols='release_spin_rate')
+
+NolaCH_swing_rf <- randomForest(swing~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+release_extension+
+                                  plate_x+plate_z,data=NolaCHtrain)
+NolaCH_whiff_rf <- randomForest(whiff~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+release_extension+
+                                  plate_x+plate_z,data=filter(NolaCHtrain,swing==1))
+NolaCH_hardhit_rf <- randomForest(hardhit~release_speed+pfx_x+pfx_z+release_spin_rate+release_pos_z+
+                                    release_extension+plate_x+
+                                    plate_z,data=filter(NolaCHtrain,contact==1))
+
+NolaCHtest <- Nola_19CH %>% 
+  select(description,launch_speed,launch_angle,pfx_x,pfx_z,
+         release_speed,release_spin_rate,release_pos_z,release_extension,plate_x,plate_z) %>%
+  na.omit
+NolaCHtest[,4:11] <- lapply(NolaCHtest[,4:11],as.numeric)
+
+NolaCHtest$swing <- ifelse(NolaCHtest$description != "ball" & 
+                                     NolaCHtest$description != "blocked_ball" &
+                                     NolaCHtest$description != "called_strike",1,0)
+NolaCHtest$whiff <- ifelse(NolaCHtest$description=="swinging_strike",1,0)
+NolaCHtest$contact <- ifelse(NolaCHtest$launch_speed != "null",1,0)
+NolaCHtest$hardhit <- ifelse(NolaCHtest$contact==1 & NolaCHtest$launch_speed>=95,1,0)
+
+NolaCHtest$swing <- as.factor(NolaCHtest$swing)
+NolaCHtest$whiff <- as.factor(NolaCHtest$whiff)
+NolaCHtest$contact <- as.factor(NolaCHtest$contact)
+NolaCHtest$hardhit <- as.factor(NolaCHtest$hardhit)
+
+NolaCHtest <- data.table(NolaCHtest)
+NolaCHtest <- na.omit(NolaCHtest,cols='release_spin_rate')
+NolaCHtest$xSwing <- predict(NolaCH_swing_rf,NolaCHtest[,4:11])
+
+NolaCHtest_swing <- filter(NolaCHtest,swing==1)
+NolaCHtest_swing$xWhiff <- predict(NolaCH_whiff_rf,NolaCHtest_swing[,4:11])
+
+NolaCHtest_contact <- filter(NolaCHtest,contact==1)
+NolaCHtest_contact$xHardHit <- predict(NolaCH_hardhit_rf,NolaCHtest_contact[,4:11])
+```
+
+```{r Results,echo=FALSE}
+NolaFF18swing_rate <- round(sum(NolaFFtrain$swing==1) / nrow(NolaFFtrain) * 100, 1)
+NolaFFswing_rate <- round(sum(NolaFFtest$swing==1) / nrow(NolaFFtest) * 100, 1)
+NolaFFxSwing_rate <- round(sum(NolaFFtest$xSwing==1) / nrow(NolaFFtest) * 100, 1)
+
+NolaFFtrain_swing <- filter(NolaFFtrain,swing==1)
+NolaFF18whiff_rate <- round(sum(NolaFFtrain_swing$whiff==1) / nrow(NolaFFtrain_swing) * 100, 1)
+NolaFFwhiff_rate <- round(sum(NolaFFtest_swing$whiff==1) / nrow(NolaFFtest_swing) * 100, 1)
+NolaFFxWhiff_rate <- round(sum(NolaFFtest_swing$xWhiff==1) / nrow(NolaFFtest_swing) * 100, 1)
+
+NolaFFtrain_contact <- filter(NolaFFtrain,contact==1)
+NolaFF18hardhit_rate <- round(sum(NolaFFtrain_contact$hardhit==1) / nrow(NolaFFtrain_contact) * 100, 1)
+NolaFFhardhit_rate <- round(sum(NolaFFtest_contact$hardhit==1) / nrow(NolaFFtest_contact) * 100, 1)
+NolaFFxHardhit_rate <- round(sum(NolaFFtest_contact$xHardHit==1) / nrow(NolaFFtest_contact) * 100, 1)
+
+NolaFT18swing_rate <- round(sum(NolaFTtrain$swing==1) / nrow(NolaFTtrain) * 100, 1)
+NolaFTswing_rate <- round(sum(NolaFTtest$swing==1) / nrow(NolaFTtest) * 100, 1)
+NolaFTxSwing_rate <- round(sum(NolaFTtest$xSwing==1) / nrow(NolaFTtest) * 100, 1)
+
+NolaFTtrain_swing <- filter(NolaFTtrain,swing==1)
+NolaFT18whiff_rate <- round(sum(NolaFTtrain_swing$whiff==1) / nrow(NolaFTtrain_swing) * 100, 1)
+NolaFTwhiff_rate <- round(sum(NolaFTtest_swing$whiff==1) / nrow(NolaFTtest_swing) * 100, 1)
+NolaFTxWhiff_rate <- round(sum(NolaFTtest_swing$xWhiff==1) / nrow(NolaFTtest_swing) * 100, 1)
+
+NolaFTtrain_contact <- filter(NolaFTtrain,contact==1)
+NolaFT18hardhit_rate <- round(sum(NolaFTtrain_contact$hardhit==1) / nrow(NolaFTtrain_contact) * 100, 1)
+NolaFThardhit_rate <- round(sum(NolaFTtest_contact$hardhit==1) / nrow(NolaFTtest_contact) * 100, 1)
+NolaFTxHardhit_rate <- round(sum(NolaFTtest_contact$xHardHit==1) / nrow(NolaFTtest_contact) * 100, 1)
+
+NolaCH18swing_rate <- round(sum(NolaCHtrain$swing==1) / nrow(NolaCHtrain) * 100, 1)
+NolaCHswing_rate <- round(sum(NolaCHtest$swing==1) / nrow(NolaCHtest) * 100, 1)
+NolaCHxSwing_rate <- round(sum(NolaCHtest$xSwing==1) / nrow(NolaCHtest) * 100, 1)
+
+NolaCHtrain_swing <- filter(NolaCHtrain,swing==1)
+NolaCH18whiff_rate <- round(sum(NolaCHtrain_swing$whiff==1) / nrow(NolaCHtrain_swing) * 100, 1)
+NolaCHwhiff_rate <- round(sum(NolaCHtest_swing$whiff==1) / nrow(NolaCHtest_swing) * 100, 1)
+NolaCHxWhiff_rate <- round(sum(NolaCHtest_swing$xWhiff==1) / nrow(NolaCHtest_swing) * 100, 1)
+
+NolaCHtrain_contact <- filter(NolaCHtrain,contact==1)
+NolaCH18hardhit_rate <- round(sum(NolaCHtrain_contact$hardhit==1) / nrow(NolaCHtrain_contact) * 100, 1)
+NolaCHhardhit_rate <- round(sum(NolaCHtest_contact$hardhit==1) / nrow(NolaCHtest_contact) * 100, 1)
+NolaCHxHardhit_rate <- round(sum(NolaCHtest_contact$xHardHit==1) / nrow(NolaCHtest_contact) * 100, 1)
+
+NolaKC18swing_rate <- round(sum(NolaKCtrain$swing==1) / nrow(NolaKCtrain) * 100, 1)
+NolaKCswing_rate <- round(sum(NolaKCtest$swing==1) / nrow(NolaKCtest) * 100, 1)
+NolaKCxSwing_rate <- round(sum(NolaKCtest$xSwing==1) / nrow(NolaKCtest) * 100, 1)
+
+NolaKCtrain_swing <- filter(NolaKCtrain,swing==1)
+NolaKC18whiff_rate <- round(sum(NolaKCtrain_swing$whiff==1) / nrow(NolaKCtrain_swing) * 100, 1)
+NolaKCwhiff_rate <- round(sum(NolaKCtest_swing$whiff==1) / nrow(NolaKCtest_swing) * 100, 1)
+NolaKCxWhiff_rate <- round(sum(NolaKCtest_swing$xWhiff==1) / nrow(NolaKCtest_swing) * 100, 1)
+
+NolaKCtrain_contact <- filter(NolaKCtrain,contact==1)
+NolaKC18hardhit_rate <- round(sum(NolaKCtrain_contact$hardhit==1) / nrow(NolaKCtrain_contact) * 100, 1)
+NolaKChardhit_rate <- round(sum(NolaKCtest_contact$hardhit==1) / nrow(NolaKCtest_contact) * 100, 1)
+NolaKCxHardhit_rate <- round(sum(NolaKCtest_contact$xHardHit==1) / nrow(NolaKCtest_contact) * 100, 1)
+```
+
+```{r Swing Results Table,echo=FALSE}
+NolaSwingResults <- data.frame(c(0,0,0,0),c(0,0,0,0),c(0,0,0,0),c(0,0,0,0),c(0,0,0,0),c(0,0,0,0))
+colnames(NolaSwingResults) <- c("Pitch Type","2018 Sw%","2019 Sw%","2019 xSw%",
+                                "Sw% Diff","xSw% Diff")
+NolaSwingResults[,1] <- c("4-Seam Fastball","2-Seam Fastball","Changeup","Knuckle Curve")
+NolaSwingResults[1,2:4] <- c(NolaFF18swing_rate,NolaFFswing_rate,NolaFFxSwing_rate)
+NolaSwingResults[2,2:4] <- c(NolaFT18swing_rate,NolaFTswing_rate,NolaFTxSwing_rate)
+NolaSwingResults[3,2:4] <- c(NolaCH18swing_rate,NolaCHswing_rate,NolaCHxSwing_rate)
+NolaSwingResults[4,2:4] <- c(NolaKC18swing_rate,NolaKCswing_rate,NolaKCxSwing_rate)
+NolaSwingResults[,5] <- NolaSwingResults[,3] - NolaSwingResults[,2]
+NolaSwingResults[,6] <- NolaSwingResults[,4] - NolaSwingResults[,2]
+
+t4 <- tableGrob(NolaSwingResults)
+title <- textGrob(paste("  Aaron Nola Swings",sep=""),
+                  gp=gpar(fontsize=12))
+padding <- unit(5,"mm")
+table <- gtable_add_rows(t4,heights = grobHeight(title) + padding,pos = 0)
+table <- gtable_add_grob(table, title, 1, 1, 1, ncol(table))
+table$layout$clip <- "off"
+grid.newpage()
+grid.draw(table)
+```
+
+```{r Whiff Results Table,echo=FALSE}
+NolaWhiffResults <- data.frame(c(0,0,0,0),c(0,0,0,0),c(0,0,0,0),c(0,0,0,0),c(0,0,0,0),c(0,0,0,0))
+colnames(NolaWhiffResults) <- c("Pitch Type","2018 SwStr%","2019 SwStr%","2019 xSwStr%",
+                                "SwStr% Diff","xSwStr% Diff")
+NolaWhiffResults[,1] <- c("4-Seam Fastball","2-Seam Fastball","Changeup","Knuckle Curve")
+NolaWhiffResults[1,2:4] <- c(NolaFF18whiff_rate,NolaFFwhiff_rate,NolaFFxWhiff_rate)
+NolaWhiffResults[2,2:4] <- c(NolaFT18whiff_rate,NolaFTwhiff_rate,NolaFTxWhiff_rate)
+NolaWhiffResults[3,2:4] <- c(NolaCH18whiff_rate,NolaCHwhiff_rate,NolaCHxWhiff_rate)
+NolaWhiffResults[4,2:4] <- c(NolaKC18whiff_rate,NolaKCwhiff_rate,NolaKCxWhiff_rate)
+NolaWhiffResults[,5] <- NolaWhiffResults[,3] - NolaWhiffResults[,2]
+NolaWhiffResults[,6] <- NolaWhiffResults[,4] - NolaWhiffResults[,2]
+
+t5 <- tableGrob(NolaWhiffResults)
+title1 <- textGrob(paste("  Aaron Nola Whiffs",sep=""),
+                  gp=gpar(fontsize=12))
+padding <- unit(5,"mm")
+table1 <- gtable_add_rows(t5,heights = grobHeight(title1) + padding,pos = 0)
+table1 <- gtable_add_grob(table1, title1, 1, 1, 1, ncol(table1))
+table$layout$clip <- "off"
+grid.newpage()
+grid.draw(table1)
+```
+
+```{r Hard Hit Results,echo=FALSE}
+NolaHardhitResults <- data.frame(c(0,0,0,0),c(0,0,0,0),c(0,0,0,0),c(0,0,0,0),c(0,0,0,0),c(0,0,0,0))
+colnames(NolaHardhitResults) <- c("Pitch Type","2018 HHR%","2019 HHR%","2019 xHHR%",
+                                "HHR% Diff","xHHR% Diff")
+NolaHardhitResults[,1] <- c("4-Seam Fastball","2-Seam Fastball","Changeup","Knuckle Curve")
+NolaHardhitResults[1,2:4] <- c(NolaFF18hardhit_rate,NolaFFhardhit_rate,NolaFFxHardhit_rate)
+NolaHardhitResults[2,2:4] <- c(NolaFT18hardhit_rate,NolaFThardhit_rate,NolaFTxHardhit_rate)
+NolaHardhitResults[3,2:4] <- c(NolaCH18hardhit_rate,NolaCHhardhit_rate,NolaCHxHardhit_rate)
+NolaHardhitResults[4,2:4] <- c(NolaKC18hardhit_rate,NolaKChardhit_rate,NolaKCxHardhit_rate)
+NolaHardhitResults[,5] <- NolaHardhitResults[,3] - NolaHardhitResults[,2]
+NolaHardhitResults[,6] <- NolaHardhitResults[,4] - NolaHardhitResults[,2]
+
+t6 <- tableGrob(NolaHardhitResults)
+title2 <- textGrob(paste("  Aaron Nola Hard Hit Balls",sep=""),
+                  gp=gpar(fontsize=12))
+padding <- unit(5,"mm")
+table2 <- gtable_add_rows(t6,heights = grobHeight(title2) + padding,pos = 0)
+table2 <- gtable_add_grob(table2, title2, 1, 1, 1, ncol(table2))
+table2$layout$clip <- "off"
+grid.newpage()
+grid.draw(table2)
+```
