@@ -14,7 +14,7 @@ I had the opportunity to intern with BaseballCloud in the summer of 2020. I help
 
 # [MLB Defensive Alignments](https://github.com/psirena/psirena.github.io/tree/main/MLB%20Defense)
 
-Defensive alignments are a very interesting topic with the increase in shifts. With this in mind, I created clusters to show where specific hitters tend to hit the ball most often and where they have the best hit probability. Code and the presentation are available for download, or you can view the presenation [here](https://iowa-my.sharepoint.com/:p:/g/personal/psirena_uiowa_edu/EaKLhuMxHyNFizJElNHyFoMBvw39SfVWKkCs3kExMM1WsQ?e=Gac8TE).
+Defensive alignments are a very interesting topic with the increase in shifts. With this in mind, I created clusters to show where specific hitters tend to hit the ball most often and where they have the best hit probability. Code and the presentation are available for download, or you can view the presentation [here](https://iowa-my.sharepoint.com/:p:/g/personal/psirena_uiowa_edu/EaKLhuMxHyNFizJElNHyFoMBvw39SfVWKkCs3kExMM1WsQ?e=Gac8TE).
 
 # [NFL Next Gen Stats](https://github.com/psirena/psirena.github.io/tree/main/NFL_ReceivingProjections)
 
